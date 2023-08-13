@@ -63,6 +63,7 @@ Root
 class WidgetStateVisitor extends RecursiveAstVisitor<void> {
   final Node root;
   late Node currentNode;
+  late ClassDeclaration parentClass;
 
   WidgetStateVisitor() : root = Node('Root') {
     currentNode = root;
@@ -77,8 +78,12 @@ class WidgetStateVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitMethodDeclaration(MethodDeclaration node) {
     print('visiting methodDeclaration ${node.name}');
-    if (node.name.toString() == 'build') {
-      node.accept(ReturnStatementVisitor(currentNode));
+    AstNode? parent = node.parent;
+    if (node.name.toString() == 'build' && parent != null) {
+      if (parent is ClassDeclaration) {
+        parentClass = parent;
+        node.accept(ReturnStatementVisitor(currentNode));
+      }
       // super.visitMethodDeclaration(node);
     }
   }
@@ -180,7 +185,8 @@ void main(List<String> arguments) async {
 
     if (visitor.root.children.isNotEmpty) {
       final file = File(fileName);
-      await file.writeAsString(extractWidget(code, visitor.root),
+      await file.writeAsString(
+          extractWidget(code, visitor.root, visitor.parentClass),
           mode: FileMode.write);
     }
 
@@ -212,7 +218,7 @@ String methodIdentifier(String widget) {
   return digest.toString().substring(0, 6);
 }
 
-String extractWidget(String code, Node node) {
+String extractWidget(String code, Node node, ClassDeclaration parentClass) {
   // Navigate to the first leaf node
   Node currentNode = node;
   while (currentNode.children.isNotEmpty) {
@@ -223,10 +229,21 @@ String extractWidget(String code, Node node) {
 
   String identifier = methodIdentifier(code);
   String methodName = 'widget$identifier';
-  String newMethod = widgetMethod(methodName, currentNode.source!);
-  String before = code.substring(0, currentNode.offset);
-  String after = code.substring(currentNode.offset! + currentNode.length!);
-  String newCode = '$before$methodName(context)$after$newMethod';
+  String methodCall = '$methodName(context)';
+
+  // Insert code into last position in parent class before the last parenthesis
+  int insertionPoint = parentClass.offset + parentClass.length - 1;
+  String methodCode = widgetMethod(methodName, currentNode.source!);
+  String newCode = code.substring(0, insertionPoint) +
+      methodCode +
+      code.substring(insertionPoint);
+
+  // Replace code with method call
+  String before = newCode.substring(0, currentNode.offset);
+  String after = newCode.substring(currentNode.offset! + currentNode.length!);
+  newCode = before + methodCall + after;
+
+  print(newCode);
 
   return DartFormatter().format(newCode);
 }

@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:convert'; // for utf8.encode
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:crypto/crypto.dart';
 import 'package:code_builder/code_builder.dart';
 import 'package:dart_style/dart_style.dart';
 
@@ -66,20 +68,33 @@ class WidgetStateVisitor extends RecursiveAstVisitor<void> {
     currentNode = root;
   }
 
-  @override
-  void visitClassDeclaration(ClassDeclaration node) {
-    super.visitClassDeclaration(node);
-  }
+  // @override
+  // void visitClassDeclaration(ClassDeclaration node) {
+  //   print('visiting classDeclaration ${node.name}');
+  //   super.visitClassDeclaration(node);
+  // }
 
   @override
   void visitMethodDeclaration(MethodDeclaration node) {
+    print('visiting methodDeclaration ${node.name}');
     if (node.name.toString() == 'build') {
-      super.visitMethodDeclaration(node);
+      node.accept(ReturnStatementVisitor(currentNode));
+      // super.visitMethodDeclaration(node);
     }
+  }
+}
+
+class ReturnStatementVisitor extends RecursiveAstVisitor<void> {
+  late Node root;
+  late Node currentNode;
+
+  ReturnStatementVisitor(Node root) {
+    this.root = currentNode = root;
   }
 
   @override
   void visitReturnStatement(ReturnStatement node) {
+    print('visiting returnStatement ${node.expression}');
     node.visitChildren(MethodInvocationVisitor(currentNode));
 
     // It's important to forgo the super() call to avoid matching nested return statements
@@ -93,18 +108,21 @@ class MethodInvocationVisitor extends SimpleAstVisitor<void> {
   late Node currentNode;
 
   MethodInvocationVisitor(Node root) {
-    this.root = this.currentNode = root;
+    this.root = currentNode = root;
   }
 
   @override
   void visitMethodInvocation(MethodInvocation node) {
-    final subtree = Node(node.methodName.toString(),
-        parent: currentNode,
-        source: node.toSource(),
-        offset: node.offset,
-        length: node.length);
-    buildTree(subtree, node);
-    currentNode.children.add(subtree);
+    final name = node.methodName.toString();
+    if (!name.startsWith('widget')) {
+      final subtree = Node(name,
+          parent: currentNode,
+          source: node.toSource(),
+          offset: node.offset,
+          length: node.length);
+      buildTree(subtree, node);
+      currentNode.children.add(subtree);
+    }
   }
 }
 
@@ -147,34 +165,51 @@ void main(List<String> arguments) async {
   }
 
   final fileName = arguments[0];
-  var code = await readFile(fileName);
-  var parseResult = parseString(content: code, throwIfDiagnostics: false);
 
-  final visitor = WidgetStateVisitor();
-  parseResult.unit.accept(visitor);
+  int iterations = 0;
+  WidgetStateVisitor visitor;
 
-  printTree(visitor.root);
+  do {
+    var code = await readFile(fileName);
+    var parseResult = parseString(content: code, throwIfDiagnostics: false);
 
-  final file = File(fileName);
-  await file.writeAsString(extractWidget(code, visitor.root),
-      mode: FileMode.write);
+    visitor = WidgetStateVisitor();
+    parseResult.unit.accept(visitor);
+
+    printTree(visitor.root);
+
+    if (visitor.root.children.isNotEmpty) {
+      final file = File(fileName);
+      await file.writeAsString(extractWidget(code, visitor.root),
+          mode: FileMode.write);
+    }
+
+    print('iterations $iterations');
+    iterations++;
+  } while (visitor.root.children.isNotEmpty && iterations < 1000);
 }
 
-String widgetMethod(String body) {
-  /* 
-  Widget <nameOfMethod><uniqueIdentifier>(BuildContext context} {
-    ...
-  }
-  */
+String widgetMethod(String name, String body) {
+  final contextParam = Parameter((b) => b
+    ..name = 'context'
+    ..type = refer('BuildContext'));
+
   final widget = Method((b) => b
-    ..name = 'widget123'
+    ..name = name
     ..returns = refer('Widget')
+    ..requiredParameters.add(contextParam)
     ..body = Code('return $body;'));
   final emitter = DartEmitter();
   final code = DartFormatter().format('${widget.accept(emitter)}');
   print(code);
 
   return code;
+}
+
+String methodIdentifier(String widget) {
+  final bytes = utf8.encode(widget); // data being hashed
+  final digest = sha256.convert(bytes);
+  return digest.toString().substring(0, 6);
 }
 
 String extractWidget(String code, Node node) {
@@ -186,47 +221,14 @@ String extractWidget(String code, Node node) {
 
   print('currentNode ${currentNode.name}');
 
-  String replacement = 'widget123()';
-  String newMethod = widgetMethod(currentNode.source!);
-  String newCode = code.substring(0, currentNode.offset) +
-      replacement +
-      code.substring(currentNode.offset! + currentNode.length!) +
-      newMethod;
+  String identifier = methodIdentifier(code);
+  String methodName = 'widget$identifier';
+  String newMethod = widgetMethod(methodName, currentNode.source!);
+  String before = code.substring(0, currentNode.offset);
+  String after = code.substring(currentNode.offset! + currentNode.length!);
+  String newCode = '$before$methodName(context)$after$newMethod';
 
-  final _newCode = DartFormatter().format(newCode);
-
-  print(_newCode);
-
-  return _newCode;
-}
-
-class Replacer {
-  Replacer(String input)
-      : _string = input,
-        _max = input.length;
-
-  String get string => _string;
-  String _string;
-  final int _max;
-
-  var _offset = 0;
-  var _tabu = 0;
-
-  void replace(int start, int end, String replacement) {
-    assert(start >= 0, 'start must be ≥ 0');
-    assert(end >= end, 'end must be ≥ start');
-    assert(end <= _max, 'end must be ≤ string length');
-    assert(start >= _tabu, 'replacement must not overlap');
-
-    final length = end - start;
-    final nstart = start + _offset;
-    _string = _string.substring(0, nstart) +
-        replacement +
-        _string.substring(nstart + length);
-    _offset += replacement.length;
-    _offset -= length;
-    _tabu = end;
-  }
+  return DartFormatter().format(newCode);
 }
 
 void printTree(Node node, [int indent = 0]) {

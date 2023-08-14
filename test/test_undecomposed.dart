@@ -10,23 +10,19 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-        title: 'Flutter Demo',
-        theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-            useMaterial3: true),
-        home: Scaffold(
-            appBar: AppBar(title: const Text('Foo Bar Baz')),
-            body: Table(
-                border: TableBorder.all(),
-                columnWidths: const <int, TableColumnWidth>{
-                  0: FixedColumnWidth(36),
-                  1: FlexColumnWidth()
-                },
-                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-                children: <TableRow>[
-                  TableRow(children: <Widget>[Container(color: Colors.green)]),
-                  TableRow(children: <Widget>[Container(color: Colors.red)])
-                ])));
+    return Foobar(
+        field1: 'foobar',
+        field2: Foo(
+          field3: Bar.method(field4: Baz.property),
+          field5: true,
+        ),
+        child: Qux(field6: Quux(property: const Text('quux')), children: [
+          Corge(
+              field7: 'corge1',
+              child: Grault(
+                field8: 'grault',
+              )),
+          Corge(field7warble: 'corge2')
+        ]));
   }
 }

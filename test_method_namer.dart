@@ -50,15 +50,34 @@ void main() {
     expect(namer.methodNames, {'Grault': 1, 'Corge': 2, 'Qux': 1, 'Foobar': 1});
   });
 
-//   test('method namer names methods correctly', () async {
-//     String code = await File('test_file.dart').readAsString();
-//     MethodNamer namer = MethodNamer(code);
+  test('method namer names methods correctly for new method name', () async {
+    String code = await File('test/test_undecomposed.dart').readAsString();
+    MethodNamer namer = MethodNamer(code);
 
-//     String methodBody = '''SvgPicture.asset123(
-//   field3: 'bar',
-//   field4: null,
-// );''';
+    String methodBody = '''Grault(field8: 'grault')''';
 
-//     expect(namer.name(methodBody), 'widgetSvgPicture_asset2');
-//   });
+    expect(namer.name(methodBody), 'widgetGrault1');
+  });
+
+  test('method namer names methods correctly for exisiting method name',
+      () async {
+    String code =
+        await File('test/test_two_factored_methods.dart').readAsString();
+    MethodNamer namer = MethodNamer(code);
+
+    String methodBody = '''Corge(field7warble: 'corge2')''';
+
+    expect(namer.name(methodBody), 'widgetCorge2');
+  });
+
+  test('method namer names methods correctly for two exisiting method names',
+      () async {
+    String code =
+        await File('test/test_three_factored_methods.dart').readAsString();
+    MethodNamer namer = MethodNamer(code);
+
+    String methodBody = '''Corge(field7warble: 'corge2')''';
+
+    expect(namer.name(methodBody), 'widgetCorge3');
+  });
 }

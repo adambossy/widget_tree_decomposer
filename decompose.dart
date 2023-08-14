@@ -185,8 +185,10 @@ void main(List<String> arguments) async {
 
     if (visitor.root.children.isNotEmpty) {
       final file = File(fileName);
+      final namer = MethodNamer(code);
       await file.writeAsString(
-          extractWidget(code, visitor.root, visitor.parentClass),
+          WidgetFactorer(namer: namer)
+              .factor(code, visitor.root, visitor.parentClass),
           mode: FileMode.write);
     }
 
@@ -195,57 +197,82 @@ void main(List<String> arguments) async {
   } while (visitor.root.children.isNotEmpty && iterations < 1000);
 }
 
-String widgetMethod(String name, String body) {
-  final contextParam = Parameter((b) => b
-    ..name = 'context'
-    ..type = refer('BuildContext'));
+class MethodNamer {
+  final Map<String, int> methodNames;
 
-  final widget = Method((b) => b
-    ..name = name
-    ..returns = refer('Widget')
-    ..requiredParameters.add(contextParam)
-    ..body = Code('return $body;'));
-  final emitter = DartEmitter();
-  final code = DartFormatter().format('${widget.accept(emitter)}');
-  print(code);
+  MethodNamer(String sourceCode) : methodNames = {} {
+    RegExp regExp = RegExp(r'\bWidget widget([^\d]+)(\d+)\(');
 
-  return code;
-}
-
-String methodIdentifier(String widget) {
-  final bytes = utf8.encode(widget); // data being hashed
-  final digest = sha256.convert(bytes);
-  return digest.toString().substring(0, 6);
-}
-
-String extractWidget(String code, Node node, ClassDeclaration parentClass) {
-  // Navigate to the first leaf node
-  Node currentNode = node;
-  while (currentNode.children.isNotEmpty) {
-    currentNode = currentNode.children.elementAt(0);
+    Iterable<Match> matches = regExp.allMatches(sourceCode);
+    for (Match match in matches) {
+      String methodName = match.group(1)!.replaceAll('.', '_');
+      int? methodCount = methodNames[methodName];
+      methodNames[methodName] = (methodCount ?? 0) + 1;
+    }
   }
 
-  print('currentNode ${currentNode.name}');
+  String name(String methodBody) {
+    RegExp regExp = RegExp(r'\b([^\d\()]+)(\d*)\(');
+    Match? match = regExp.firstMatch(methodBody);
 
-  String identifier = methodIdentifier(code);
-  String methodName = 'widget$identifier';
-  String methodCall = '$methodName(context)';
+    String prefix;
+    if (match != null) {
+      prefix = match.group(1)!.replaceAll('.', '_');
+      int? methodCount = methodNames[prefix];
+      methodNames[prefix] = (methodCount ?? 0) + 1;
+      return 'widget' + prefix + methodNames[prefix].toString();
+    }
 
-  // Insert code into last position in parent class before the last parenthesis
-  int insertionPoint = parentClass.offset + parentClass.length - 1;
-  String methodCode = widgetMethod(methodName, currentNode.source!);
-  String newCode = code.substring(0, insertionPoint) +
-      methodCode +
-      code.substring(insertionPoint);
+    throw Exception('Couldn\'t get the method name of $methodBody');
+  }
+}
 
-  // Replace code with method call
-  String before = newCode.substring(0, currentNode.offset);
-  String after = newCode.substring(currentNode.offset! + currentNode.length!);
-  newCode = before + methodCall + after;
+class WidgetFactorer {
+  final MethodNamer namer;
 
-  print(newCode);
+  WidgetFactorer({required this.namer});
 
-  return DartFormatter().format(newCode);
+  String widgetMethod(String name, String body) {
+    final contextParam = Parameter((b) => b
+      ..name = 'context'
+      ..type = refer('BuildContext'));
+
+    final widget = Method((b) => b
+      ..name = name
+      ..returns = refer('Widget')
+      ..requiredParameters.add(contextParam)
+      ..body = Code('return $body;'));
+
+    final emitter = DartEmitter();
+    return DartFormatter().format('${widget.accept(emitter)}');
+  }
+
+  String factor(String code, Node node, ClassDeclaration parentClass) {
+    // Navigate to the first leaf node
+    Node currentNode = node;
+    while (currentNode.children.isNotEmpty) {
+      currentNode = currentNode.children.elementAt(0);
+    }
+
+    String methodName = namer.name(currentNode.source!);
+    String methodCall = '$methodName(context)';
+
+    print(currentNode.source);
+
+    // Insert code into last position in parent class before the last parenthesis
+    int insertionPoint = parentClass.offset + parentClass.length - 1;
+    String methodCode = widgetMethod(methodName, currentNode.source!);
+    String newCode = code.substring(0, insertionPoint) +
+        methodCode +
+        code.substring(insertionPoint);
+
+    // Replace code with method call
+    String before = newCode.substring(0, currentNode.offset);
+    String after = newCode.substring(currentNode.offset! + currentNode.length!);
+    newCode = before + methodCall + after;
+
+    return DartFormatter().format(newCode);
+  }
 }
 
 void printTree(Node node, [int indent = 0]) {
